@@ -1,12 +1,17 @@
+import os
 import pandas as pd
+
 
 # Function to process each cell
 def process_currency(currency):
+    # Convert currency to string before splitting
+    currency = str(currency)
     split_currency = currency.split('\n')
     if split_currency[0] == 'ETH':
         return split_currency[1] if len(split_currency) > 1 else split_currency[0]
     else:
         return split_currency[0]
+
 
 def load_and_clean_data(filepath):
     df = pd.read_csv(filepath)
@@ -30,10 +35,10 @@ def load_and_clean_data(filepath):
 
 def aggregate_amounts(df, ETH_address):
     # Aggregating buy and sell amounts for each token
-    buy_df = df[df['Sell Currency Address'] == ETH_address].groupby('Buy Currency')[['Sell Amount', 'Fee Amount']].sum()
+    buy_df = df[df['Sell Currency'] == 'ETH'].groupby('Buy Currency')[['Sell Amount', 'Fee Amount']].sum()
     buy_df.columns = ['Total Bought', 'Buy Fee Amount']
 
-    sell_df = df[df['Buy Currency Address'] == ETH_address].groupby('Sell Currency')[
+    sell_df = df[df['Buy Currency'] == 'ETH'].groupby('Sell Currency')[
         ['Buy Amount', 'Fee Amount']].sum()
     sell_df.columns = ['Total Sold', 'Sell Fee Amount']
 
@@ -50,22 +55,37 @@ def aggregate_amounts(df, ETH_address):
     return result
 
 
-def calculate_win_ratio(result):
+def calculate_win_ratio(result, file_name):
     number_of_coins_bought = len(result)
-    win = sum(result['Total Sold'] > (result['Total Bought'] + result['Fee Amount']))
+    win = 0
 
-    win_ratio = str(round((win / number_of_coins_bought) * 100, 2)) + '%'
+    for _, row in result.iterrows():
+        if row['Total Sold'] > (row['Total Bought'] + row['Fee Amount']):
+            win += 1
 
-    print(result)
+    # Check if number_of_coins_bought is not zero before calculating win_ratio
+    if number_of_coins_bought != 0:
+        win_ratio = str(round((win / number_of_coins_bought) * 100, 2)) + '%'
+    else:
+        win_ratio = 'No Token Bought'
+
+    # print(result)
+
     print(f'\nNumber of Tokens Bought: {number_of_coins_bought}')
     print(f'Number of Win: {win}')
     print(f'Win Ratio: {win_ratio}')
 
-    result.to_csv('/Users/kendhalaltay/Downloads/results.csv')
+    result.to_csv(f'csv/results/{file_name}.csv')
 
 
 if __name__ == "__main__":
-    filepath = '/Users/kendhalaltay/Downloads/0x8f615808b2c93534f9ad1173a3d8d31b1ddd5065 transactions 06_09_2023 16_54 from Zerion.csv'
-    df, ETH_address = load_and_clean_data(filepath)
-    result = aggregate_amounts(df, ETH_address)
-    calculate_win_ratio(result)
+    folder_path = '/Users/kendhalaltay/Desktop/Kendhal/Projects/Defi/csv/'
+    files = os.listdir(folder_path)
+
+    for file_name in files:
+        if file_name != '.DS_Store':
+            print('\n', file_name)
+            file_path = os.path.join(folder_path, file_name)
+            df, ETH_address = load_and_clean_data(file_path)
+            result = aggregate_amounts(df, ETH_address)
+            calculate_win_ratio(result, file_name)
