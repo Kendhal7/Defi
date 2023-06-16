@@ -83,7 +83,7 @@ if __name__ == "__main__":
     files = os.listdir(folder_path)
 
     for file_name in files:
-        if file_name != '.DS_Store':
+        if file_name not in ['.DS_Store', 'archive', 'results']:
             print('\n', file_name)
             file_path = os.path.join(folder_path, file_name)
             df, ETH_address = load_and_clean_data(file_path)
