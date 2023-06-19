@@ -1,77 +1,108 @@
-import os
-import requests
 import json
+import os
 from datetime import datetime, timedelta
+from typing import List
+
+import requests
 import yaml
 from tqdm import tqdm
 
-# Upload the config file
-file = open(f"credentials.yml", 'r')
-config = yaml.load(file, Loader=yaml.FullLoader)
 
-# Get Twitter Credentials
-ETHERSCAN_API_KEY = config['Etherscan']["API_KEY"]
-ADDRESS = config['FixedFloat']["ADDRESS"]
+class Config:
+    def __init__(self, file_path: str) -> None:
+        self.file_path = file_path
+        self.data = self.load_config()
 
-API_URL = f"https://api.etherscan.io/api?module=account&action=txlist&address={ADDRESS}&startblock=0&endblock=99999999&sort=desc&apikey={ETHERSCAN_API_KEY}"
+    def load_config(self) -> dict:
+        with open(self.file_path, 'r') as file:
+            return yaml.safe_load(file)
 
-# Conversion factor from wei to Ether
-WEI_TO_ETHER = 10 ** 18
-
-
-# Function to retrieve transactions from Etherscan API
-def get_transactions(url):
-    response = requests.get(url)
-    data = response.json()
-    # print(data)
-    return data['result'] if 'result' in data else []
+    def get_value(self, key: str) -> str:
+        keys = key.split('.')
+        value = self.data
+        for k in keys:
+            value = value[k]
+        return value
 
 
-# Function to check balance of an Ethereum address
-def check_balance(address):
-    url = f"https://api.etherscan.io/api?module=account&action=balance&address={address}&tag=latest&apikey={ETHERSCAN_API_KEY}"
-    response = requests.get(url)
-    data = response.json()
-    if data['message'] == 'OK':
-        balance_wei = int(data['result'])
-        balance_ether = balance_wei / WEI_TO_ETHER
-        return balance_ether
-    else:
-        print(f"Failed to get balance for address {address}. Error message: {data['message']}")
-        return None
+class EtherscanAPI:
+    WEI_TO_ETHER = 10 ** 18
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
+
+    def get_transactions(self, address: str) -> List[dict]:
+        url = f"https://api.etherscan.io/api?module=account&action=txlist&address={address}&startblock=0&endblock=99999999&sort=desc&apikey={self.api_key}"
+        response = requests.get(url)
+        data = response.json()
+        return data.get('result', [])
+
+    def was_address_active_before(self, address: str, timestamp: datetime, txhash: str) -> bool:
+        transactions = self.get_transactions(address)
+        for tx in transactions:
+            if tx['hash'] == txhash:
+                continue
+            tx_time = datetime.utcfromtimestamp(int(tx['timeStamp']))
+            if tx_time < timestamp:
+                return True
+        return False
 
 
-# Fetch transactions
-transactions = get_transactions(API_URL)
+class FileManager:
+    @staticmethod
+    def create_dir(path: str) -> None:
+        os.makedirs(path, exist_ok=True)
 
-filtered_transactions = []
+    @staticmethod
+    def write_to_file(file_path: str, data: dict) -> None:
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=2)
 
-# Get the date 7 days ago
-seven_days_ago = datetime.now() - timedelta(days=7)
 
-# Filter transactions
-for tx in transactions:
-    tx_time = datetime.utcfromtimestamp(int(tx['timeStamp']))
-    if tx['from'].lower() == ADDRESS.lower() and tx_time >= seven_days_ago:
-        value_ether = int(tx['value']) / WEI_TO_ETHER
-        if 0.5 <= value_ether <= 5:
-            filtered_transactions.append(tx['to'])
+def main():
+    # Load the config file
+    config = Config("credentials.yml")
 
-# Get unique addresses
-unique_addresses = set(filtered_transactions)
+    # Get credentials
+    ETHERSCAN_API_KEY = config.get_value('Etherscan.API_KEY')
+    ADDRESS = config.get_value('FixedFloat.ADDRESS')
 
-# Filter addresses with balance over 0.5 ETH
-addresses_with_balance = []
-for address in tqdm(unique_addresses, desc="Checking balances"):
-    balance = check_balance(address)
-    if balance is not None and balance >= 0.5:
-        addresses_with_balance.append(address)
+    # Instantiate the EtherscanAPI
+    etherscan = EtherscanAPI(ETHERSCAN_API_KEY)
 
-# Ensure 'fixedfloat' directory exists
-os.makedirs('fixedfloat', exist_ok=True)
+    # Fetch transactions
+    transactions = etherscan.get_transactions(ADDRESS)
 
-# Write the filtered addresses to a file
-with open('fixedfloat/filtered_addresses.json', 'w') as f:
-    json.dump(addresses_with_balance, f, indent=2)
+    filtered_transactions = []
+    time_threshold = datetime.now() - timedelta(days=1)
 
-print("Addresses written to 'fixedfloat/filtered_addresses.json'")
+    # Filter transactions
+    for tx in transactions:
+        tx_time = datetime.utcfromtimestamp(int(tx['timeStamp']))
+        if tx['from'].lower() == ADDRESS.lower() and tx_time >= time_threshold:
+            value_ether = int(tx['value']) / EtherscanAPI.WEI_TO_ETHER
+            if 0.5 <= value_ether <= 5:
+                filtered_transactions.append(tx)
+
+    # Filter addresses with no activity before the transaction from the target wallet
+    addresses_with_no_prior_activity = []
+    for tx in tqdm(filtered_transactions, desc="Checking prior activity"):
+        address = tx['to']
+        tx_time = datetime.utcfromtimestamp(int(tx['timeStamp']))
+        tx_hash = tx['hash']
+        if not etherscan.was_address_active_before(address, tx_time, tx_hash):
+            addresses_with_no_prior_activity.append(address)
+
+    print(addresses_with_no_prior_activity)
+
+    # Ensure 'fixedfloat' directory exists
+    FileManager.create_dir('fixedfloat')
+
+    # Write the filtered addresses to a file
+    FileManager.write_to_file('fixedfloat/filtered_addresses.json', addresses_with_no_prior_activity)
+
+    print("Addresses written to 'fixedfloat/filtered_addresses.json'")
+
+
+if __name__ == "__main__":
+    main()
