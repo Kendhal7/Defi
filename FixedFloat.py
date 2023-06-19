@@ -83,12 +83,13 @@ def main():
     transactions = etherscan.get_transactions(ADDRESS)
 
     filtered_transactions = []
+    print(datetime.now())
     time_threshold = datetime.now() - timedelta(hours=5)
 
     # Filter transactions
     for tx in transactions:
         tx_time = datetime.utcfromtimestamp(int(tx['timeStamp']))
-        if tx['from'].lower() == ADDRESS.lower() and tx_time >= time_threshold:
+        if tx['from'].lower() == ADDRESS.lower() and tx_time >= (time_threshold - timedelta(hours=2)):
             value_ether = int(tx['value']) / EtherscanAPI.WEI_TO_ETHER
             if 0.5 <= value_ether <= 5:
                 filtered_transactions.append(tx)
