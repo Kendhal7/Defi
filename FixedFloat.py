@@ -47,6 +47,15 @@ class EtherscanAPI:
                 return True
         return False
 
+    def did_address_create_contract(self, address: str) -> bool:
+        transactions = self.get_transactions(address)
+        for tx in transactions:
+            # A contract creation transaction has its `to` field as null
+            # and `input` field contains the contract creation code
+            if tx['to'] == '':  # `input` is '0x' for non-contract creation transactions
+                return True
+        return False
+
 
 class FileManager:
     @staticmethod
@@ -74,7 +83,7 @@ def main():
     transactions = etherscan.get_transactions(ADDRESS)
 
     filtered_transactions = []
-    time_threshold = datetime.now() - timedelta(days=1)
+    time_threshold = datetime.now() - timedelta(hours=5)
 
     # Filter transactions
     for tx in transactions:
@@ -95,11 +104,19 @@ def main():
 
     print(addresses_with_no_prior_activity)
 
+    # Filter addresses that created contracts
+    addresses_without_contracts = []
+    for address in tqdm(addresses_with_no_prior_activity, desc="Checking contract creation"):
+        if not etherscan.did_address_create_contract(address):
+            addresses_without_contracts.append(address)
+
+    print(addresses_without_contracts)
+
     # Ensure 'fixedfloat' directory exists
     FileManager.create_dir('fixedfloat')
 
     # Write the filtered addresses to a file
-    FileManager.write_to_file('fixedfloat/filtered_addresses.json', addresses_with_no_prior_activity)
+    FileManager.write_to_file('fixedfloat/filtered_addresses.json', addresses_without_contracts)
 
     print("Addresses written to 'fixedfloat/filtered_addresses.json'")
 
