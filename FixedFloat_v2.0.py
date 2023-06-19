@@ -91,16 +91,25 @@ class EtherscanAPI:
         processed_transactions = db_manager.get_all_transactions()
 
         for tx in transactions:
-            if 'functionName' in tx and 'swapExactETHForTokens' in tx['functionName']:
+            if 'functionName' in tx and ('swapExactETHForTokens' in tx['functionName'] or 'unoswap' in tx['functionName']):
                 if tx['hash'] not in processed_transactions:
                     _obj = TelegramAlert()
                     _obj.send_telegram_message(
                         f"A swap was performed, here's the link: https://etherscan.io/tx/{tx['hash']}")
                     db_manager.insert_transaction(tx['hash'])
+                    print(tx)
                     return True
 
         db_manager.close_connection()  # Close the connection when done
         return False
+
+    def get_balance(self, address: str) -> float:
+        url = f"https://api.etherscan.io/api?module=account&action=balance&address={address}&tag=latest&apikey={self.api_key}"
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            return int(data.get('result', 0)) / self.WEI_TO_ETHER
+        response.raise_for_status()
 
 
 class FileManager:
@@ -122,6 +131,7 @@ class DBManager:
                      (address text UNIQUE)''')
         self.c.execute('''CREATE TABLE IF NOT EXISTS transactions
                              (txhash text UNIQUE)''')
+        self.conn.commit()
 
     def insert_address(self, address):
         try:
@@ -132,6 +142,7 @@ class DBManager:
     def insert_transaction(self, txhash):
         try:
             self.c.execute("INSERT INTO transactions VALUES (?)", (txhash,))
+            self.conn.commit()  # Commit changes
         except sqlite3.IntegrityError:
             pass  # transaction already exists in the database
 
@@ -161,6 +172,8 @@ def check_swaps():
             addresses_with_swap.append(address)
         elif etherscan.did_address_create_contract(address):  # Check for contract creation
             db.remove_address(address)  # Remove address from DB if contract was created
+        elif etherscan.get_balance(address) < 0.1:  # Check if balance is below 0.1 ETH
+            db.remove_address(address)  # Remove address from DB if balance is too low
 
     print(f"\nAddresses that performed a swap: {addresses_with_swap}")
 
