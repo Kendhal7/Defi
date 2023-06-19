@@ -29,6 +29,32 @@ class Config:
         return reduce(getitem, key.split('.'), self.data)
 
 
+class TelegramAlert():
+
+    def __init__(self):
+
+        self.token_id = "5658693549:AAEijjBvMsq1QyrWyn7Ey8p5ic2dwmddijk"
+        self.chat_id = '-868377608'
+
+    def send_telegram_message(self, message):
+        """Sends message via Telegram"""
+
+        url = "https://api.telegram.org/bot" + self.token_id + "/sendMessage"
+        data = {
+            "chat_id": self.chat_id,
+            "text": message
+        }
+
+        try:
+            response = requests.request("POST", url, params=data)
+            telegram_data = json.loads(response.text)
+            return telegram_data["ok"]
+        except Exception as e:
+            print("An error occurred in sending the alert message via Telegram")
+            print(e)
+        return False
+
+
 @dataclass
 class EtherscanAPI:
     api_key: str
@@ -61,9 +87,19 @@ class EtherscanAPI:
 
     def did_address_swap(self, address: str) -> bool:
         transactions = self.get_transactions(address)
+        db_manager = DBManager('addresses.db')
+        processed_transactions = db_manager.get_all_transactions()
+
         for tx in transactions:
             if 'functionName' in tx and 'swapExactETHForTokens' in tx['functionName']:
-                return True
+                if tx['hash'] not in processed_transactions:
+                    _obj = TelegramAlert()
+                    _obj.send_telegram_message(
+                        f"A swap was performed, here's the link: https://etherscan.io/tx/{tx['hash']}")
+                    db_manager.insert_transaction(tx['hash'])
+                    return True
+
+        db_manager.close_connection()  # Close the connection when done
         return False
 
 
@@ -84,6 +120,8 @@ class DBManager:
         self.c = self.conn.cursor()
         self.c.execute('''CREATE TABLE IF NOT EXISTS addresses
                      (address text UNIQUE)''')
+        self.c.execute('''CREATE TABLE IF NOT EXISTS transactions
+                             (txhash text UNIQUE)''')
 
     def insert_address(self, address):
         try:
@@ -91,8 +129,17 @@ class DBManager:
         except sqlite3.IntegrityError:
             pass  # address already exists in the database
 
+    def insert_transaction(self, txhash):
+        try:
+            self.c.execute("INSERT INTO transactions VALUES (?)", (txhash,))
+        except sqlite3.IntegrityError:
+            pass  # transaction already exists in the database
+
     def get_all_addresses(self):
         return [record[0] for record in self.c.execute('SELECT address FROM addresses')]
+
+    def get_all_transactions(self):
+        return [record[0] for record in self.c.execute('SELECT txhash FROM transactions')]
 
     def remove_address(self, address: str):
         self.c.execute("DELETE FROM addresses WHERE address=?", (address,))
@@ -135,7 +182,8 @@ def main():
     transactions = etherscan.get_transactions(ADDRESS)
 
     filtered_transactions = []
-    print(datetime.now())
+    print('------------------------------------------------------------------')
+    print('\nTIME:', datetime.now(), '\n')
     time_threshold = datetime.now() - timedelta(minutes=30)
 
     # Filter transactions
@@ -155,14 +203,13 @@ def main():
         if not etherscan.was_address_active_before(address, tx_time, tx_hash):
             addresses_with_no_prior_activity.append(address)
 
-    print('\nNo Prior Activity:\n', addresses_with_no_prior_activity, '\n')
-
     # Filter addresses that created contracts
     addresses_without_contracts = []
     for address in tqdm(addresses_with_no_prior_activity, desc="Checking contract creation"):
         if not etherscan.did_address_create_contract(address):
             addresses_without_contracts.append(address)
 
+    print('\nNo Prior Activity:\n', addresses_with_no_prior_activity, '\n')
     print('\nAddresses without contract creation:\n', addresses_without_contracts, '\n')
 
     # Write the filtered addresses to a SQLite database
@@ -171,7 +218,7 @@ def main():
         db.insert_address(address)
     db.close_connection()
 
-    print("\nAddresses written to 'addresses.db'")
+    print("Addresses written to 'addresses.db'\n")
 
 
 def job():
