@@ -29,12 +29,12 @@ class Config:
         return reduce(getitem, key.split('.'), self.data)
 
 
-class TelegramAlert():
+class TelegramAlert:
 
     def __init__(self):
-
-        self.token_id = "5658693549:AAEijjBvMsq1QyrWyn7Ey8p5ic2dwmddijk"
-        self.chat_id = '-868377608'
+        config = Config("credentials.yml")
+        self.token_id = config.get_value('Telegram.TOKEN_ID')
+        self.chat_id = config.get_value('Telegram.CHAT_ID')
 
     def send_telegram_message(self, message):
         """Sends message via Telegram"""
@@ -80,24 +80,23 @@ class EtherscanAPI:
 
     def did_address_create_contract(self, address: str) -> bool:
         transactions = self.get_transactions(address)
-        for tx in transactions:
-            if tx['to'] == '':
-                return True
-        return False
+        return any(tx['to'] == '' for tx in transactions)
 
     def did_address_swap(self, address: str) -> bool:
         transactions = self.get_transactions(address)
         db_manager = DBManager('addresses.db')
         processed_transactions = db_manager.get_all_transactions()
+        telegram_alert = TelegramAlert()
+
+        functions_to_check = ['swapExactETHForTokens', 'unoswap', 'execute', 'swap']
+        uniswap_router_address = "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD".lower()
 
         for tx in transactions:
-            if 'functionName' in tx and ('swapExactETHForTokens' in tx['functionName'] or 'unoswap' in tx['functionName']):
+            if ('functionName' in tx and any(func in tx['functionName'] for func in functions_to_check)) or tx['to'].lower() == uniswap_router_address:
                 if tx['hash'] not in processed_transactions:
-                    _obj = TelegramAlert()
-                    _obj.send_telegram_message(
+                    telegram_alert.send_telegram_message(
                         f"A swap was performed, here's the link: https://etherscan.io/tx/{tx['hash']}")
                     db_manager.insert_transaction(tx['hash'])
-                    print(tx)
                     return True
 
         db_manager.close_connection()  # Close the connection when done
@@ -204,7 +203,7 @@ def main():
         tx_time = datetime.utcfromtimestamp(int(tx['timeStamp']))
         if tx['from'].lower() == ADDRESS.lower() and tx_time >= (time_threshold - timedelta(hours=2)):
             value_ether = int(tx['value']) / EtherscanAPI.WEI_TO_ETHER
-            if 0.1 <= value_ether <= 10:
+            if 0.5 <= value_ether <= 10:
                 filtered_transactions.append(tx)
 
     # Filter addresses with no activity before the transaction from the target wallet
