@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta
 from dataclasses import dataclass
+from typing import List, Dict
 from operator import getitem
 from functools import reduce
-from pathlib import Path
-from typing import List, Dict
 from psycopg2 import sql
+from pathlib import Path
 from tqdm import tqdm
 import psycopg2
 import requests
@@ -182,6 +182,8 @@ class EtherscanAPI:
         for tx in transactions:
             if isinstance(tx, dict) and (('functionName' in tx and any(func in tx['functionName'] for func in functions_to_check)) or tx.get('to', '').lower() == uniswap_router_address):
                 if tx['hash'] not in processed_transactions:
+                    db_manager.insert_transaction(tx['hash'])
+                    db_manager.close_connection()
                     telegram_alert = TelegramAlert()
                     telegram_alert.send_telegram_message(
                         f"A swap was performed, here's the link: https://etherscan.io/tx/{tx['hash']}")
@@ -194,8 +196,6 @@ class EtherscanAPI:
                                 continue
                     except IndexError as e:
                         continue
-                    db_manager.insert_transaction(tx['hash'])
-                    db_manager.close_connection()
                     return True
 
         db_manager.close_connection()  # Close the connection when done
